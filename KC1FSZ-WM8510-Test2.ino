@@ -51,8 +51,21 @@ void writeWM8510Register(unsigned int addr,unsigned int data) {
   digitalWrite(PIN_WM8510_CSB,1);
 }
 
+float cycle[64];
+
 void setup() {
 
+  delay(50);
+  Serial.begin(9600);
+  Serial.println("Hello?");
+  delay(50);
+
+  float fullCycle = 2 * 3.1415926;
+  for (int i = 0; i < 64; i++) {
+    cycle[i] = cos(fullCycle * ((float)i/64.0));
+  }
+
+  
   pinMode(13,OUTPUT);
 
   // Flash hello
@@ -74,7 +87,32 @@ void setup() {
   // Normally high
   digitalWrite(PIN_WM8510_CSB,1);
 
-  // I2S Configuration
+
+  // WN8510 Power on sequence
+  // Wait for supply voltage to settle
+  delay(50);
+  // Set MICBEN=1, BIASEN=1, VMIDEL[1:0]
+  writeWM8510Register(0x01,0b000011011);
+  // Wait for VMID to settle
+  delay(2000);
+  // Speaker output enabled P/N | speaker mixer | DAC enabled 
+  writeWM8510Register(0x03,
+    WM8510_03_SPKNEN | WM8510_03_SPKPEN | WM8510_03_SPKMIXEN | WM8510_03_DACEN);
+  // Word Length=16 | I2S format 
+  writeWM8510Register(0x04,
+    WM8510_04_WL_00 | WM8510_04_FMT_10); 
+  // Clock source MCLK | scaling factor 1
+  writeWM8510Register(0x06,0);
+  // Sample rate to 8kHz
+  writeWM8510Register(0x07,0b000001010);
+  // Set microphone bias level and hook up MICN and MICP
+  //writeWM8510Register(0x2c,
+  //  WM8510_2C_MVBSEL | WM8510_2C_MICPNINPPGA | WM8510_2C_MICP2INPPGA);
+  // Set DACMU=0
+  writeWM8510Register(0x0a,0);
+  writeWM8510Register(0x0b,0b011111000);
+
+  // ----- I2S Configuration
   // Configure the Teensy 3.2 pins per the reference and wiring
   PORTC_PCR3 = PORT_PCR_MUX(6); // Alt 6 is BLCK - T3.2 pin 9
   PORTC_PCR6 = PORT_PCR_MUX(6); // Alt 6 is MCLK - T3.2 pin 11
@@ -113,27 +151,6 @@ void setup() {
   I2S0_TCSR = I2S_TCSR_TE | I2S_TCSR_BCE | I2S_TCSR_FRIE;
   // Enable the system-level interrupt for I2S
   NVIC_ENABLE_IRQ(IRQ_I2S0_TX);
-
-  // WN8510 Power on sequence
-  // Wait for supply voltage to settle
-  delay(50);
-  // Set MICBEN=1, BIASEN=1, VMIDEL[1:0]
-  writeWM8510Register(0x01,0b000011011);
-  // Wait for VMID to settle
-  delay(2000);
-  // Speaker output enabled P/N | speaker mixer | DAC enabled 
-  writeWM8510Register(0x03,
-    WM8510_03_SPKNEN | WM8510_03_SPKPEN | WM8510_03_SPKMIXEN | WM8510_03_DACEN);
-  // Word Length 16 | I2S format 
-  writeWM8510Register(0x04,
-    WM8510_04_WL_00 | WM8510_04_FMT_10); 
-  // Clock source MCLK | scaling factor 1
-  writeWM8510Register(0x06,0);
-  // Sample rate to 8kHz
-  writeWM8510Register(0x07,0b000001010);
-  // Set microphone bias level and hook up MICN and MICP
-  writeWM8510Register(0x2c,
-    WM8510_2C_MVBSEL | WM8510_2C_MICPNINPPGA | WM8510_2C_MICP2INPPGA);
 }
 
 void loop() {
@@ -147,8 +164,12 @@ void loop() {
 }
 
 uint32_t frameCounter = 0;
-uint32_t counter = 0;
 uint32_t diag0 = 0;
+
+float fs = 8000;
+float ft = 1000;
+float step = (64.0 / (fs / ft));
+float ptr = 0;
 
 /*
  * Utility function that looks at the read/write ponters on the 
@@ -174,15 +195,30 @@ bool isFIFOFull() {
 void tryWrite() {
   // Loop
   while (!isFIFOFull()) {
+    
     frameCounter++;
-    // Data counter only advances at the start of a frame.  This
-    // means that the same value is being written into both 
-    // channels.
-    if (frameCounter % 2 == 0) {
-      counter++;
+    
+    // Data counter only advances at the start of a frame.
+    if (frameCounter % 2 == 1) {
+      // Advance through the sample space, wrapping as needed
+      ptr += step;
+      if (ptr >= 64.0) {
+        ptr -= 64.0;
+      }
+      float sample = (1.0 + cycle[(int)ptr]) / 2.0;
+      float scaled = ((float)(0xffff / 2)) * sample;
+      // Write a value.  This automatically advances the write pointer
+      I2S0_TDR0 = (uint32_t)scaled;    
+    } else {
+      I2S0_TDR0 = 0;    
     }
-    // Write a value.  This automatically advances the write pointer
-    I2S0_TDR0 = counter & 0xffff;    
+    /*
+    if (counter % 2 == 0) {
+      I2S0_TDR0 = 0xfff;          
+    } else {
+      I2S0_TDR0 = 0x0;         
+    } 
+    */
   }
 }
 
