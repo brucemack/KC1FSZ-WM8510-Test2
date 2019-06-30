@@ -51,7 +51,8 @@ void writeWM8510Register(unsigned int addr,unsigned int data) {
   digitalWrite(PIN_WM8510_CSB,1);
 }
 
-float cycle[64];
+float cycle[256];
+int cycleSize = 256;
 
 void setup() {
 
@@ -61,8 +62,8 @@ void setup() {
   delay(50);
 
   float fullCycle = 2 * 3.1415926;
-  for (int i = 0; i < 64; i++) {
-    cycle[i] = cos(fullCycle * ((float)i/64.0));
+  for (int i = 0; i < cycleSize; i++) {
+    cycle[i] = cos(fullCycle * ((float)i/(float)cycleSize));
   }
 
   
@@ -110,7 +111,7 @@ void setup() {
   //  WM8510_2C_MVBSEL | WM8510_2C_MICPNINPPGA | WM8510_2C_MICP2INPPGA);
   // Set DACMU=0
   writeWM8510Register(0x0a,0);
-  writeWM8510Register(0x0b,0b011111000);
+  writeWM8510Register(0x0b,0b011110000);
 
   // ----- I2S Configuration
   // Configure the Teensy 3.2 pins per the reference and wiring
@@ -166,9 +167,12 @@ void loop() {
 uint32_t frameCounter = 0;
 uint32_t diag0 = 0;
 
-float fs = 8000;
-float ft = 1000;
-float step = (64.0 / (fs / ft));
+float fs = 8000.0;
+// Tone frequency
+float ft = 1000.0;
+// How far to step through the cycle at each stample
+float step = ((float)cycleSize / (fs / ft));
+// Phase accumulator
 float ptr = 0;
 
 /*
@@ -202,23 +206,20 @@ void tryWrite() {
     if (frameCounter % 2 == 1) {
       // Advance through the sample space, wrapping as needed
       ptr += step;
-      if (ptr >= 64.0) {
-        ptr -= 64.0;
+      if (ptr >= (float)cycleSize) {
+        ptr -= (float)cycleSize;
       }
-      float sample = (1.0 + cycle[(int)ptr]) / 2.0;
-      float scaled = ((float)(0xffff / 2)) * sample;
+      // This ranges from -1 to +1
+      float sample = cycle[(int)ptr];
+      // This ranges from -32,766.0 to 32,766.0
+      float scaled = ((float)(0xfffe) / 2.0) * sample;
+      // Change to signed integer (twos complement)
+      int scaledInt = scaled;
       // Write a value.  This automatically advances the write pointer
-      I2S0_TDR0 = (uint32_t)scaled;    
+      I2S0_TDR0 = scaledInt;    
     } else {
       I2S0_TDR0 = 0;    
     }
-    /*
-    if (counter % 2 == 0) {
-      I2S0_TDR0 = 0xfff;          
-    } else {
-      I2S0_TDR0 = 0x0;         
-    } 
-    */
   }
 }
 
@@ -227,11 +228,13 @@ void i2s0_tx_isr(void) {
   cli();
   // Replenish the FIFO as quickly as possible
   tryWrite();
+  /*
   // Lower frequency flashing (approximately 1 Hz)
   if (++diag0 % 8000 > 4000) {
     digitalWriteFast(13,1);
   } else {
     digitalWriteFast(13,0);
   }
+  */
   sei();
 }
