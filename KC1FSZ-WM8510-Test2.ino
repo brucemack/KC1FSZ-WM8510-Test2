@@ -9,11 +9,17 @@
 #define I2S_MCLK_DIVIDE 423
 
 // WM8510 Control masks
-#define WM8510_02_ADCEN       (0b000000001)
-#define WM8510_02_INPPGAEN    (0b000000100)
 
+#define WM8510_01_MIC2EN      (0b001000000)
+
+#define WM8510_02_BOOSTEN     (0b000001000)
+#define WM8510_02_INPPGAEN    (0b000000100)
+#define WM8510_02_ADCEN       (0b000000001)
+
+#define WM8510_03_MONOEN      (0b010000000)
 #define WM8510_03_SPKNEN      (0b001000000)
 #define WM8510_03_SPKPEN      (0b000100000)
+#define WM8510_03_MONOMIXEN   (0b000001000)
 #define WM8510_03_SPKMIXEN    (0b000000100)
 #define WM8510_03_DACEN       (0b000000001)
 
@@ -22,14 +28,23 @@
 
 #define WM8510_06_CLKSEL      (0b100000000)   // PLL
 
+#define WM8510_20_ALCSEL      (0b100000000)   // ALC on
+#define WM8510_20_ALCMAX(x)   ((x & 0b111) << 3) 
+#define WM8510_20_ALCMIN(x)   ((x & 0b111)) 
+
 #define WM8510_2A_DACOSR128   (0b000001000)   // DAC oversampling 128x
+
+#define WM8510_2F_PGABOOST    (0b100000000)
 
 #define WM8510_2C_MVBSEL      (0b100000000)
 #define WM8510_2C_MICPNINPPGA (0b000000010)
 #define WM8510_2C_MICP2INPPGA (0b000000001)
 
+#define WM8510_32_MIC2_2SPK   (0b000100000) 
 #define WM8510_32_BYP2SPK     (0b000000010) 
 #define WM8510_32_DAC2SPK     (0b000000001) 
+
+#define WM8510_38_MIC2_2MONO  (0b000000100) 
 
 // Sample frequency
 const int Fs = 8000;
@@ -161,38 +176,57 @@ void setup() {
   // WN8510 Power on sequence
   // Wait for supply voltage to settle
   delay(50);
+  // Set MICBEN=1, BIASEN=1, VMIDEL[1:0], MIC2EN=1
+  //writeWM8510Register(0x01,0b000011011 | WM8510_01_MIC2EN);
   // Set MICBEN=1, BIASEN=1, VMIDEL[1:0]
   writeWM8510Register(0x01,0b000011011);
   // Wait for VMID to settle
   delay(2000);
-  // Speaker output enabled P/N | speaker mixer | DAC enabled 
-  writeWM8510Register(0x03,
-    WM8510_03_SPKNEN | WM8510_03_SPKPEN | WM8510_03_SPKMIXEN | WM8510_03_DACEN);
   // Word Length=16 | I2S format 
-  writeWM8510Register(0x04,
-    WM8510_04_WL_00 | WM8510_04_FMT_10); 
+  writeWM8510Register(0x04,WM8510_04_WL_00 | WM8510_04_FMT_10); 
   // Clock source MCLK | scaling factor 1
   writeWM8510Register(0x06,0);
   // Sample rate to 8kHz
   writeWM8510Register(0x07,0b000001010);
 
-  // Enable the microphone PGA
-  writeWM8510Register(0x02,WM8510_02_INPPGAEN);  
-  // Set microphone bias level and hook up MICN and MICP to the PGA
-  writeWM8510Register(0x2c,
-    WM8510_2C_MICPNINPPGA | WM8510_2C_MICP2INPPGA);
-  // Set the PGA gain to full-scale, PGA not muted
-  writeWM8510Register(0x2d,0b000111111);
-   
-  // Set DACMU=0 | Set DAC oversampling 128x (best quality)
-  writeWM8510Register(0x0a,WM8510_2A_DACOSR128);
+  // ----- Input Control -------------------------------------
   
+  // Enable the microphone PGA
+  writeWM8510Register(0x02,WM8510_02_BOOSTEN | WM8510_02_INPPGAEN | WM8510_02_ADCEN);  
+  // Set microphone bias level and hook up MICN and MICP to the PGA
+  writeWM8510Register(0x2c,WM8510_2C_MICPNINPPGA | WM8510_2C_MICP2INPPGA);
+  writeWM8510Register(0x2f,WM8510_2F_PGABOOST);
+  // Set the PGA gain to full-scale, PGA not muted
+  //writeWM8510Register(0x2d,0b000111111);
+  // Turn on ALC
+  writeWM8510Register(0x22,WM8510_20_ALCSEL | WM8510_20_ALCMAX(7) | WM8510_20_ALCMIN(0));
+
+  // ----- Output Control ------------------------------------
+  // Enable the mono output and the mono mixer
+  //writeWM8510Register(0x03,WM8510_03_MONOEN | WM8510_03_MONOMIXEN);
+  // Route MIC2 (aux amplifier) to the mono mixer
+  //writeWM8510Register(0x38,WM8510_38_MIC2_2MONO);
+
+  writeWM8510Register(0x03,
+    WM8510_03_SPKNEN | WM8510_03_SPKPEN | WM8510_03_SPKMIXEN);
+  //writeWM8510Register(0x32,WM8510_32_MIC2_2SPK);
+  //writeWM8510Register(0x32,WM8510_32_DAC2SPK);
   // TEMP: Adjust the speaker mixer stage so that it takes the bypass path 
   writeWM8510Register(0x32,WM8510_32_BYP2SPK);
+  writeWM8510Register(0x36,0b000111111);
   
+  /*   
+  // Speaker output enabled P/N | speaker mixer | DAC enabled 
+  writeWM8510Register(0x03,
+    WM8510_03_SPKNEN | WM8510_03_SPKPEN | WM8510_03_SPKMIXEN | WM8510_03_DACEN);
+  // Set DACMU=0 | Set DAC oversampling 128x (best quality)
+  writeWM8510Register(0x0a,WM8510_2A_DACOSR128);
+  // TEMP: Adjust the speaker mixer stage so that it takes the bypass path 
+  writeWM8510Register(0x32,WM8510_32_BYP2SPK);
   // Speaker Gain
   writeWM8510Register(0x0b,0b011111000);
-
+  */
+  
   // ----- I2S Configuration
   // Configure the Teensy 3.2 pins per the reference and wiring
   PORTC_PCR3 = PORT_PCR_MUX(6); // Alt 6 is BLCK - T3.2 pin 9
